@@ -166,6 +166,39 @@ package body ${ada_lib_name}.Implementation is
    --  If E is known, return its unique Id from State. Otherwise, assign it a
    --  new unique Id and return it.
 
+   ----------------
+   -- Enter_Call --
+   ----------------
+
+   procedure Enter_Call
+     (Context : Internal_Context; Call_Depth : access Natural)
+   is
+      Max             : Natural renames Context.Max_Call_Depth;
+      Current         : Natural renames Context.Current_Call_Depth;
+      High_Water_Mark : Natural renames Context.Call_Depth_High_Water_Mark;
+   begin
+      Current := Current + 1;
+      High_Water_Mark := Natural'Max (High_Water_Mark, Current);
+      Call_Depth.all := Current;
+      if Current > Max then
+         raise Property_Error with "stack overflow";
+      end if;
+   end Enter_Call;
+
+   ---------------
+   -- Exit_Call --
+   ---------------
+
+   procedure Exit_Call (Context : Internal_Context; Call_Depth : Natural) is
+      Current : Natural renames Context.Current_Call_Depth;
+   begin
+      if Call_Depth /= Current then
+         raise Program_Error with
+            "Langkit code generation bug for call depth handling detected";
+      end if;
+      Current := Current - 1;
+   end Exit_Call;
+
    -----------
    -- Image --
    -----------
@@ -275,7 +308,9 @@ package body ${ada_lib_name}.Implementation is
      (Charset       : String;
       Unit_Provider : Internal_Unit_Provider_Access;
       With_Trivia   : Boolean;
-      Tab_Stop      : Positive) return Internal_Context
+      Tab_Stop       : Positive;
+      Max_Call_Depth : Natural := ${ctx.default_max_call_depth})
+      return Internal_Context
    is
       Actual_Charset : constant String :=
         (if Charset = "" then Default_Charset else Charset);
@@ -310,6 +345,8 @@ package body ${ada_lib_name}.Implementation is
 
       Context.Rewriting_Handle := No_Rewriting_Handle_Pointer;
       Context.Templates_Unit := No_Analysis_Unit;
+
+      Context.Max_Call_Depth := Max_Call_Depth;
 
       ${exts.include_extension(ctx.ext('analysis', 'context', 'create'))}
 
@@ -869,7 +906,8 @@ package body ${ada_lib_name}.Implementation is
 
    procedure Dump_Lexical_Env (Unit : Internal_Unit) is
       Node     : constant ${T.root_node.name} := Unit.AST_Root;
-      Root_Env : constant Lexical_Env := Unit.Context.Root_Scope;
+      Context  : constant Internal_Context := Unit.Context;
+      Root_Env : constant Lexical_Env := Context.Root_Scope;
       State    : Dump_Lexical_Env_State := (Root_Env => Root_Env, others => <>);
 
       --------------------------
@@ -881,8 +919,11 @@ package body ${ada_lib_name}.Implementation is
          if Env /= Null_Lexical_Env then
             Dump_One_Lexical_Env
               (Env, Get_Env_Id (Env, State),
-               Get_Env_Id (Get_Env (Env.Env.Parent, No_Entity_Info), State));
-            Explore_Parent_Chain (Get_Env (Env.Env.Parent, No_Entity_Info));
+               Get_Env_Id (Get_Env (Env.Env.Parent, No_Entity_Info, Context),
+                           State),
+               Context => Context);
+            Explore_Parent_Chain
+              (Get_Env (Env.Env.Parent, No_Entity_Info, Context));
          end if;
       end Explore_Parent_Chain;
 
@@ -904,11 +945,12 @@ package body ${ada_lib_name}.Implementation is
          --  envs we have already seen or not.
          if not State.Env_Ids.Contains (Current.Self_Env) then
             Env := Current.Self_Env;
-            Parent := Get_Env (Env.Env.Parent, No_Entity_Info);
+            Parent := Get_Env (Env.Env.Parent, No_Entity_Info, Context);
             Explore_Parent := not State.Env_Ids.Contains (Parent);
 
             Dump_One_Lexical_Env
-              (Env, Get_Env_Id (Env, State), Get_Env_Id (Parent, State));
+              (Env, Get_Env_Id (Env, State), Get_Env_Id (Parent, State),
+               Context => Context);
 
             if Explore_Parent then
                Explore_Parent_Chain (Parent);
@@ -1193,6 +1235,7 @@ package body ${ada_lib_name}.Implementation is
          Cats                : Ref_Categories;
          Shed_Rebindings     : Boolean)
       is
+         Context : constant Internal_Context := Self.Unit.Context;
       begin
          for N of Ref_Env_Nodes.Items loop
             if N /= null then
@@ -1201,7 +1244,8 @@ package body ${ada_lib_name}.Implementation is
                      "attempt to add a referenced environment to a foreign"
                      & " unit";
                end if;
-               Reference (Dest_Env, N, Resolver, Kind, Cats, Shed_Rebindings);
+               Reference (Dest_Env, N, Resolver, Kind, Cats, Shed_Rebindings,
+                          Context);
             end if;
          end loop;
          Dec_Ref (Ref_Env_Nodes);
@@ -1799,10 +1843,14 @@ package body ${ada_lib_name}.Implementation is
         (Node      : ${T.root_node.name};
          Bound_Env : Lexical_Env) return Boolean
       is
+         Call_Depth  : aliased Natural;
          Result      : Boolean := False;
          Initial_Env : Lexical_Env;
       begin
+         Enter_Call (Context, Call_Depth'Access);
+
          if Node = null then
+            Exit_Call (Context, Call_Depth);
             return Result;
          end if;
 
@@ -1825,10 +1873,16 @@ package body ${ada_lib_name}.Implementation is
             Post_Env_Actions (Node, Initial_Env, Root_Env);
          exception
             when Property_Error =>
+               Exit_Call (Context, Call_Depth);
                return True;
          end;
 
+         Exit_Call (Context, Call_Depth);
          return Result;
+      exception
+         when others =>
+            Exit_Call (Context, Call_Depth);
+            raise;
       end Populate_Internal;
 
    begin
@@ -2775,6 +2829,8 @@ package body ${ada_lib_name}.Implementation is
       E_Info : ${T.entity_info.name} := ${T.entity_info.nullexpr})
       return Lexical_Env
    is
+      Context : constant Internal_Context := Node.Unit.Context;
+
       function Get_Base_Env return Lexical_Env;
       --  Return the environment that we need to rebind before returning
 
@@ -2791,7 +2847,7 @@ package body ${ada_lib_name}.Implementation is
 
          function Get_Parent_Env return Lexical_Env is
             Parent : constant Lexical_Env :=
-               Get_Env (Node.Self_Env.Env.Parent, No_Entity_Info);
+               Get_Env (Node.Self_Env.Env.Parent, No_Entity_Info, Context);
          begin
             --  If Node is the root scope or the empty environment, Parent can
             --  be a wrapper around the null node. Turn this into the
@@ -3426,6 +3482,7 @@ package body ${ada_lib_name}.Implementation is
    ------------------
 
    procedure Reset_Envs (Unit : Internal_Unit) is
+      Context : constant Internal_Context := Unit.Context;
 
       procedure Deactivate_Refd_Envs (Node : ${T.root_node.name});
       procedure Recompute_Refd_Envs (Node : ${T.root_node.name});
@@ -3455,7 +3512,7 @@ package body ${ada_lib_name}.Implementation is
          if Node = null then
             return;
          end if;
-         Recompute_Referenced_Envs (Node.Self_Env);
+         Recompute_Referenced_Envs (Node.Self_Env, Context);
          for I in 1 .. Children_Count (Node) loop
             Recompute_Refd_Envs (Child (Node, I));
          end loop;

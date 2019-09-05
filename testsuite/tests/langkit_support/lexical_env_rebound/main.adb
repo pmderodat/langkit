@@ -22,13 +22,15 @@ procedure Main is
 
    Rebindings : Env_Rebindings := Append (null, Child, New_Env);
    Rebound    : Lexical_Env := Rebind_Env (Grandchild, Rebindings);
+
+   Context : constant Context_Type := (null record);
 begin
    Add (Root, Key_X, '1');
    Add (New_Env, Key_X, '2');
    Add (Grandchild, Key_X, '3');
 
    Put_Line ("Looking in Rebound:");
-   Put_Line (Get (Rebound, Key_X));
+   Put_Line (Get (Rebound, Key_X, Context => Context));
 
    declare
       Dummy : Env_Rebindings;

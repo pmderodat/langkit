@@ -18,16 +18,18 @@ procedure Main is
      (No_Env_Getter, 'B', Owner => True);
 
    Grouped : Lexical_Env := Group ((A, B));
+   Context : constant Context_Type := (null record);
 begin
    Add (A_Parent, Key_X, '1');
    Add (A, Key_X, '2');
    Add (B, Key_X, '3');
 
    Put_Line ("Looking in Grouped (Lookup_Kind => Recursive):");
-   Put_Line (Get (Grouped, Key_X, Lookup_Kind => Recursive));
+   Put_Line
+     (Get (Grouped, Key_X, Lookup_Kind => Recursive, Context => Context));
 
    Put_Line ("Looking in Grouped (Lookup_Kind => Flat):");
-   Put_Line (Get (Grouped, Key_X, Lookup_Kind => Flat));
+   Put_Line (Get (Grouped, Key_X, Lookup_Kind => Flat, Context => Context));
 
    Dec_Ref (Grouped);
    Destroy (A_Parent);

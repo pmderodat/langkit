@@ -22,21 +22,23 @@ procedure Main is
    Child    : Lexical_Env := Create_Lexical_Env
      (Simple_Env_Getter (Root), 'C', Owner => True);
    Orphaned : Lexical_Env := Orphan (Child);
+
+   Context : constant Context_Type := (null record);
 begin
    Add (Root, Key_A, '1');
    Add (Child, Key_B, '2');
 
    Put_Line ("Looking for A in Child:");
-   Put_Line (Get (Child, Key_A));
+   Put_Line (Get (Child, Key_A, Context => Context));
 
    Put_Line ("Looking for B in Child:");
-   Put_Line (Get (Child, Key_B));
+   Put_Line (Get (Child, Key_B, Context => Context));
 
    Put_Line ("Looking for A in Orphaned:");
-   Put_Line (Get (Orphaned, Key_A));
+   Put_Line (Get (Orphaned, Key_A, Context => Context));
 
    Put_Line ("Looking for B in Orphaned:");
-   Put_Line (Get (Orphaned, Key_B));
+   Put_Line (Get (Orphaned, Key_B, Context => Context));
 
    declare
       Transitive_Child : Lexical_Env :=

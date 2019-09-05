@@ -41,7 +41,8 @@ package body Langkit_Support.Lexical_Env is
    --  Whether lookup cache is enabled for the given lexical environment.
    --  Note that for now, this is only a global setting (not per env).
 
-   function Is_Lookup_Cache_Valid (Env : Lexical_Env) return Boolean
+   function Is_Lookup_Cache_Valid
+     (Env : Lexical_Env; Context : Context_Type) return Boolean
       with Pre => Env.Kind = Primary;
    --  Return whether Env's lookup cache is valid. This will check every
    --  Lookup_Cache_Valid flag up Env's parent chain.
@@ -75,7 +76,8 @@ package body Langkit_Support.Lexical_Env is
 
    function Shed_Rebindings
      (From_Env   : Lexical_Env;
-      Rebindings : Env_Rebindings) return Env_Rebindings
+      Rebindings : Env_Rebindings;
+      Context    : Context_Type) return Env_Rebindings
      with Inline;
    --  Shed env rebindings that are not in the parent chain for From_Env
 
@@ -91,8 +93,8 @@ package body Langkit_Support.Lexical_Env is
       Lookup_Kind   : Lookup_Kind_Type := Recursive;
       Rebindings    : Env_Rebindings := null;
       Metadata      : Node_Metadata := Empty_Metadata;
-      Categories    : Ref_Categories)
-      return Lookup_Result_Array;
+      Categories    : Ref_Categories;
+      Context       : Context_Type) return Lookup_Result_Array;
 
    procedure Reset_Lookup_Cache (Self : Lexical_Env);
    --  Reset Self's lexical environment lookup cache
@@ -117,16 +119,24 @@ package body Langkit_Support.Lexical_Env is
    -- Is_Lookup_Cache_Valid --
    ---------------------------
 
-   function Is_Lookup_Cache_Valid (Env : Lexical_Env) return Boolean is
-      P : Lexical_Env;
+   function Is_Lookup_Cache_Valid
+     (Env : Lexical_Env; Context : Context_Type) return Boolean
+   is
+      Call_Depth : aliased Natural;
+      P          : Lexical_Env;
    begin
-      if Env.Env.Lookup_Cache_Valid then
-         P := Parent (Env);
-         return (P in Null_Lexical_Env | Empty_Env
-                 or else Is_Lookup_Cache_Valid (P));
-      else
-         return False;
-      end if;
+      Enter_Call (Context, Call_Depth'Access);
+
+      return Result : Boolean do
+         if Env.Env.Lookup_Cache_Valid then
+            P := Parent (Env, Context);
+            Result := (P in Null_Lexical_Env | Empty_Env
+                       or else Is_Lookup_Cache_Valid (P, Context));
+         else
+            Result := False;
+         end if;
+         Exit_Call (Context, Call_Depth);
+      end return;
    end Is_Lookup_Cache_Valid;
 
    ------------------------
@@ -168,12 +178,14 @@ package body Langkit_Support.Lexical_Env is
    -- Resolve --
    -------------
 
-   procedure Resolve (Self : in out Env_Getter; Info : Entity_Info) is
+   procedure Resolve
+     (Self : in out Env_Getter; Info : Entity_Info; Context : Context_Type)
+   is
       Env : Lexical_Env;
    begin
       case Self.Dynamic is
          when True =>
-            Env := Get_Env (Self, Info);
+            Env := Get_Env (Self, Info, Context);
 
             --  Get_Env returns an ownership share for the returned reference,
             --  but we don't use it here, so dec ref.
@@ -187,20 +199,26 @@ package body Langkit_Support.Lexical_Env is
    -- Get_Env --
    -------------
 
-   function Get_Env (Self : in out Env_Getter;
-                     Info : Entity_Info) return Lexical_Env
+   function Get_Env
+     (Self    : in out Env_Getter;
+      Info    : Entity_Info;
+      Context : Context_Type) return Lexical_Env
    is
+      Call_Depth    : aliased Natural;
       Cache_Enabled : constant Boolean := Info = No_Entity_Info;
       --  The cache (Self.Env) can be used only if No_Entity_Info is passed
    begin
+      Enter_Call (Context, Call_Depth'Access);
+
       if Self.Dynamic then
          --  Resolve the dynamic lexical env getter. For this, use the cache if
          --  possible.
          if Cache_Enabled and then Self.Env /= Null_Lexical_Env then
 
             --  If it is not stale, return it
-            if not Is_Stale (Self.Env) then
+            if not Is_Stale (Self.Env, Context) then
                Inc_Ref (Self.Env);
+               Exit_Call (Context, Call_Depth);
                return Self.Env;
             end if;
 
@@ -220,6 +238,7 @@ package body Langkit_Support.Lexical_Env is
                --  the returned value.
                Self.Env := Result;
             else
+               Exit_Call (Context, Call_Depth);
                return Result;
             end if;
          end;
@@ -228,7 +247,13 @@ package body Langkit_Support.Lexical_Env is
       --  Return a copy of the cached resolved lexical env, so create a new
       --  ownership share.
       Inc_Ref (Self.Env);
+      Exit_Call (Context, Call_Depth);
       return Self.Env;
+
+   exception
+      when others =>
+         Exit_Call (Context, Call_Depth);
+         raise;
    end Get_Env;
 
    ----------------
@@ -491,7 +516,8 @@ package body Langkit_Support.Lexical_Env is
       Resolver         : Lexical_Env_Resolver;
       Kind             : Ref_Kind := Normal;
       Categories       : Ref_Categories := All_Cats;
-      Rebindings_Assoc : Boolean := False)
+      Rebindings_Assoc : Boolean := False;
+      Context          : Context_Type)
    is
       Refd_Env : Referenced_Env :=
         (Kind,
@@ -501,7 +527,7 @@ package body Langkit_Support.Lexical_Env is
       if Self = Empty_Env then
          return;
       end if;
-      Resolve (Refd_Env.Getter, No_Entity_Info);
+      Resolve (Refd_Env.Getter, No_Entity_Info, Context);
       Refd_Env.State := Active;
 
       Referenced_Envs_Vectors.Append
@@ -555,8 +581,8 @@ package body Langkit_Support.Lexical_Env is
       Lookup_Kind   : Lookup_Kind_Type := Recursive;
       Rebindings    : Env_Rebindings := null;
       Metadata      : Node_Metadata := Empty_Metadata;
-      Categories    : Ref_Categories)
-      return Lookup_Result_Array
+      Categories    : Ref_Categories;
+      Context       : Context_Type) return Lookup_Result_Array
    is
 
       Local_Results      : Lookup_Result_Vector;
@@ -699,7 +725,9 @@ package body Langkit_Support.Lexical_Env is
          --  Get the env for the referenced env getter. Pass the metadata and
          --  current_rebindings, if relevant.
          Env := Get_Env
-           (Self.Getter, Entity_Info'(Metadata, Current_Rebindings, False));
+           (Self.Getter,
+            Entity_Info'(Metadata, Current_Rebindings, False),
+            Context);
 
          declare
             Refd_Results : constant Lookup_Result_Array :=
@@ -712,9 +740,11 @@ package body Langkit_Support.Lexical_Env is
                     then raise System.Assertions.Assert_Failure
                       with "Should not happen"
                     else Flat),
-                 Rebindings => Shed_Rebindings (Env, Current_Rebindings),
+                 Rebindings  =>
+                    Shed_Rebindings (Env, Current_Rebindings, Context),
                  Metadata    => Metadata,
-                 Categories  => Categories);
+                 Categories  => Categories,
+                 Context     => Context);
          begin
             if Self.Getter.Dynamic then
                for Res of Refd_Results loop
@@ -752,25 +782,32 @@ package body Langkit_Support.Lexical_Env is
       use Lookup_Cache_Maps;
 
       Found_Rebinding : Boolean := False;
+      Call_Depth      : aliased Natural;
 
    begin
       if Self in Empty_Env then
          return Empty_Lookup_Result_Array;
       end if;
 
+      Enter_Call (Context, Call_Depth'Access);
+
       if Has_Trace then
          Traces.Trace
            (Rec, "Get_Internal env="
-            & Lexical_Env_Image (Self, Dump_Content => False)
+            & Lexical_Env_Image
+                (Self, Dump_Content => False, Context => Context)
             & " key = " & Image (Key)
             & " lookup kind = " & Lookup_Kind_Type'Image (Lookup_Kind));
       end if;
 
       case Self.Kind is
          when Orphaned => null;
-            return Get_Internal
+            return Result : constant Lookup_Result_Array := Get_Internal
               (Self.Env.Orphaned_Env, Key, Flat, Rebindings, Metadata,
-               Categories);
+               Categories, Context)
+            do
+               Exit_Call (Context, Call_Depth);
+            end return;
 
          when Grouped =>
             --  Just concatenate lookups for all grouped environments
@@ -782,7 +819,7 @@ package body Langkit_Support.Lexical_Env is
                for E of Self.Env.Grouped_Envs.all loop
                   Local_Results.Concat
                     (Get_Internal (E, Key, Lookup_Kind, Rebindings, MD,
-                                   Categories));
+                                   Categories, Context));
                end loop;
             end;
             Traces.Decrease_Indent (Rec);
@@ -790,13 +827,17 @@ package body Langkit_Support.Lexical_Env is
             return R : constant Lookup_Result_Array := Local_Results.To_Array
             do
                Local_Results.Destroy;
+               Exit_Call (Context, Call_Depth);
             end return;
 
          when Rebound =>
-            return Get_Internal
+            return Result : constant Lookup_Result_Array := Get_Internal
               (Self.Env.Rebound_Env, Key, Lookup_Kind,
                Combine (Self.Env.Rebindings, Rebindings),
-               Metadata, Categories);
+               Metadata, Categories, Context)
+            do
+               Exit_Call (Context, Call_Depth);
+            end return;
 
          when Primary => null; --  Handled below to avoid extra nesting levels
       end case;
@@ -805,7 +846,7 @@ package body Langkit_Support.Lexical_Env is
 
       if Has_Lookup_Cache (Self) and then Lookup_Kind = Recursive then
 
-         if not Is_Lookup_Cache_Valid (Self) then
+         if not Is_Lookup_Cache_Valid (Self, Context) then
             Reset_Lookup_Cache (Self);
          end if;
 
@@ -828,8 +869,10 @@ package body Langkit_Support.Lexical_Env is
 
             case Res_Val.State is
                when Computing =>
+                  Exit_Call (Context, Call_Depth);
                   return Empty_Lookup_Result_Array;
                when Computed =>
+                  Exit_Call (Context, Call_Depth);
                   return Res_Val.Elements.To_Array;
                when None => null;
             end case;
@@ -869,7 +912,7 @@ package body Langkit_Support.Lexical_Env is
            .. Self.Env.Referenced_Envs.Last_Index
          loop
             if Self.Env.Referenced_Envs.Get_Access (I).Kind
-            in Transitive | Prioritary
+               in Transitive | Prioritary
             then
                Get_Refd_Nodes (Self.Env.Referenced_Envs.Get_Access (I).all);
             end if;
@@ -880,9 +923,9 @@ package body Langkit_Support.Lexical_Env is
          if Lookup_Kind = Recursive or else Self.Env.Transitive_Parent
          then
             declare
-               Parent_Env        : Lexical_Env := Parent (Self);
+               Parent_Env        : Lexical_Env := Parent (Self, Context);
                Parent_Rebindings : constant Env_Rebindings :=
-                 Shed_Rebindings (Parent_Env, Current_Rebindings);
+                 Shed_Rebindings (Parent_Env, Current_Rebindings, Context);
             begin
                if Has_Trace then
                   Traces.Trace
@@ -891,9 +934,8 @@ package body Langkit_Support.Lexical_Env is
                end if;
                Local_Results.Concat
                  (Get_Internal
-                    (Parent_Env, Key, Lookup_Kind,
-                     Parent_Rebindings,
-                     Metadata, Categories));
+                    (Parent_Env, Key, Lookup_Kind, Parent_Rebindings, Metadata,
+                     Categories, Context));
                if Has_Trace then
                   Traces.Decrease_Indent (Rec);
                end if;
@@ -936,14 +978,20 @@ package body Langkit_Support.Lexical_Env is
             Self.Env.Lookup_Cache.Include (Res_Key, Val);
          end;
 
+         Exit_Call (Context, Call_Depth);
          return Local_Results.To_Array;
       else
          return R : constant Lookup_Result_Array := Local_Results.To_Array
          do
             Local_Results.Destroy;
+            Exit_Call (Context, Call_Depth);
          end return;
       end if;
 
+   exception
+      when others =>
+         Exit_Call (Context, Call_Depth);
+         raise;
    end Get_Internal;
 
    ---------
@@ -955,8 +1003,8 @@ package body Langkit_Support.Lexical_Env is
       Key         : Symbol_Type;
       From        : Node_Type := No_Node;
       Lookup_Kind : Lookup_Kind_Type := Recursive;
-      Categories  : Ref_Categories := All_Cats)
-      return Entity_Array
+      Categories  : Ref_Categories := All_Cats;
+      Context     : Context_Type) return Entity_Array
    is
       FV : Entity_Vectors.Vector;
    begin
@@ -965,15 +1013,16 @@ package body Langkit_Support.Lexical_Env is
          Traces.Trace
            (Me,
            "===== In Env get, key=" & Image (Key)
-            & ", env=" & Lexical_Env_Image (Self, Dump_Content => False)
+            & ", env="
+            & Lexical_Env_Image
+                (Self, Dump_Content => False, Context => Context)
            & " =====");
          Traces.Increase_Indent (Me);
       end if;
 
       declare
-         Results : constant Lookup_Result_Array :=
-           Get_Internal
-             (Self, Key, Lookup_Kind, null, Empty_Metadata, Categories);
+         Results : constant Lookup_Result_Array := Get_Internal
+           (Self, Key, Lookup_Kind, null, Empty_Metadata, Categories, Context);
       begin
          for El of Results loop
             if From = No_Node
@@ -1010,7 +1059,8 @@ package body Langkit_Support.Lexical_Env is
       Key         : Symbol_Type;
       From        : Node_Type := No_Node;
       Lookup_Kind : Lookup_Kind_Type := Recursive;
-      Categories  : Ref_Categories := All_Cats) return Entity
+      Categories  : Ref_Categories := All_Cats;
+      Context     : Context_Type) return Entity
    is
       FV : Entity_Vectors.Vector;
    begin
@@ -1022,9 +1072,8 @@ package body Langkit_Support.Lexical_Env is
       end if;
 
       declare
-         V : constant Lookup_Result_Array :=
-           Get_Internal
-             (Self, Key, Lookup_Kind, null, Empty_Metadata, Categories);
+         V : constant Lookup_Result_Array := Get_Internal
+           (Self, Key, Lookup_Kind, null, Empty_Metadata, Categories, Context);
       begin
 
          for El of V loop
@@ -1365,7 +1414,8 @@ package body Langkit_Support.Lexical_Env is
 
    function Shed_Rebindings
      (From_Env   : Lexical_Env;
-      Rebindings : Env_Rebindings) return Env_Rebindings
+      Rebindings : Env_Rebindings;
+      Context    : Context_Type) return Env_Rebindings
    is
       First_Rebindable_Parent : Lexical_Env;
       Assoc_Ref_Env           : Lexical_Env;
@@ -1395,7 +1445,9 @@ package body Langkit_Support.Lexical_Env is
             Assoc_Ref_Env := Get_Env
               (First_Rebindable_Parent.Env.Referenced_Envs.Get_Access
                  (First_Rebindable_Parent.Env.Rebindings_Assoc_Ref_Env)
-               .Getter, No_Entity_Info);
+               .Getter,
+               No_Entity_Info,
+               Context);
 
             declare
                N : Node_Type renames Env_Node (Assoc_Ref_Env);
@@ -1409,7 +1461,8 @@ package body Langkit_Support.Lexical_Env is
          end if;
 
          declare
-            Next : constant Lexical_Env := Parent (First_Rebindable_Parent);
+            Next : constant Lexical_Env :=
+               Parent (First_Rebindable_Parent, Context);
          begin
             Dec_Ref (First_Rebindable_Parent);
             First_Rebindable_Parent := Next;
@@ -1439,11 +1492,14 @@ package body Langkit_Support.Lexical_Env is
    ---------------------
 
    function Shed_Rebindings
-     (E_Info : Entity_Info; Env : Lexical_Env) return Entity_Info is
+     (E_Info  : Entity_Info;
+      Env     : Lexical_Env;
+      Context : Context_Type) return Entity_Info is
    begin
-      return (MD              => E_Info.MD,
-              Rebindings      => Shed_Rebindings (Env, E_Info.Rebindings),
-              From_Rebound => False);
+      return
+        (MD              => E_Info.MD,
+         Rebindings      => Shed_Rebindings (Env, E_Info.Rebindings, Context),
+         From_Rebound => False);
    end Shed_Rebindings;
 
    ------------------------------
@@ -1681,9 +1737,11 @@ package body Langkit_Support.Lexical_Env is
       Parent_Env_Id  : String := "";
       Dump_Addresses : Boolean := False;
       Dump_Content   : Boolean := True;
-      Prefix         : String := "") return String
+      Prefix         : String := "";
+      Context        : Context_Type) return String
    is
-      Result : Unbounded_String;
+      Call_Depth : aliased Natural;
+      Result     : Unbounded_String;
 
       Sub_Prefix : constant String := Prefix & "  ";
 
@@ -1722,6 +1780,8 @@ package body Langkit_Support.Lexical_Env is
          return "";
       end if;
 
+      Enter_Call (Context, Call_Depth'Access);
+
       --  No matter what, emit a short description of this environment: kind,
       --  whether it's empty, parent/node/... if asked.
 
@@ -1744,7 +1804,7 @@ package body Langkit_Support.Lexical_Env is
             New_Arg;
             Append (Result,
                     "Parent="
-                    & (if Parent (Self) /= Empty_Env
+                    & (if Parent (Self, Context) /= Empty_Env
                        then Parent_Env_Id else "null"));
          end if;
 
@@ -1764,6 +1824,7 @@ package body Langkit_Support.Lexical_Env is
 
       --  If that was all that was asked, stop here
       if not Dump_Content then
+         Exit_Call (Context, Call_Depth);
          return To_String (Result);
       end if;
 
@@ -1779,7 +1840,7 @@ package body Langkit_Support.Lexical_Env is
                for I in Refs.First_Index .. Refs.Last_Index loop
                   declare
                      G   : Env_Getter renames Refs.Get_Access (I).Getter;
-                     Env : Lexical_Env := Get_Env (G, No_Entity_Info);
+                     Env : Lexical_Env := Get_Env (G, No_Entity_Info, Context);
                   begin
                      if Env /= Empty_Env then
                         Append (Result, Sub_Prefix & "Referenced: ");
@@ -1791,7 +1852,8 @@ package body Langkit_Support.Lexical_Env is
                           (Result,
                            Lexical_Env_Image (Self           => Env,
                                               Dump_Addresses => Dump_Addresses,
-                                              Dump_Content   => False));
+                                              Dump_Content   => False,
+                                              Context        => Context));
                         Append (Result, ASCII.LF);
                         Dec_Ref (Env);
                      end if;
@@ -1824,7 +1886,8 @@ package body Langkit_Support.Lexical_Env is
                  (Self           => Self.Env.Orphaned_Env,
                   Dump_Addresses => Dump_Addresses,
                   Dump_Content   => Dump_Content,
-                  Prefix         => Sub_Prefix));
+                  Prefix         => Sub_Prefix,
+                  Context        => Context));
 
          when Grouped =>
             for E of Self.Env.Grouped_Envs.all loop
@@ -1833,7 +1896,8 @@ package body Langkit_Support.Lexical_Env is
                     (Self           => E,
                      Dump_Addresses => Dump_Addresses,
                      Dump_Content   => Dump_Content,
-                     Prefix         => Sub_Prefix));
+                     Prefix         => Sub_Prefix,
+                     Context        => Context));
             end loop;
 
          when Rebound =>
@@ -1846,9 +1910,11 @@ package body Langkit_Support.Lexical_Env is
                  (Self           => Self.Env.Rebound_Env,
                   Dump_Addresses => Dump_Addresses,
                   Dump_Content   => Dump_Content,
-                  Prefix         => Sub_Prefix));
+                  Prefix         => Sub_Prefix,
+                  Context        => Context));
       end case;
 
+      Exit_Call (Context, Call_Depth);
       return To_String (Result);
    end Lexical_Env_Image;
 
@@ -1856,7 +1922,9 @@ package body Langkit_Support.Lexical_Env is
    -- Lexical_Env_Parent_Chain --
    ------------------------------
 
-   function Lexical_Env_Parent_Chain (Env : Lexical_Env) return String is
+   function Lexical_Env_Parent_Chain
+     (Env : Lexical_Env; Context : Context_Type) return String
+   is
       Id     : Positive := 1;
       E      : Lexical_Env := Env;
       Result : Unbounded_String;
@@ -1876,10 +1944,11 @@ package body Langkit_Support.Lexical_Env is
                  (Self           => E,
                   Env_Id         => Id_Str,
                   Parent_Env_Id  => '@' & Stripped_Image (Id + 1),
-                  Dump_Addresses => True));
+                  Dump_Addresses => True,
+                  Context        => Context));
          end;
          Id := Id + 1;
-         E := Parent (E);
+         E := Parent (E, Context);
       end loop;
       return To_String (Result);
    end Lexical_Env_Parent_Chain;
@@ -1893,44 +1962,61 @@ package body Langkit_Support.Lexical_Env is
       Env_Id         : String := "";
       Parent_Env_Id  : String := "";
       Dump_Addresses : Boolean := False;
-      Dump_Content   : Boolean := True)
+      Dump_Content   : Boolean := True;
+      Context        : Context_Type)
    is
    begin
       Put_Line
         (Lexical_Env_Image
-           (Self, Env_Id, Parent_Env_Id, Dump_Addresses, Dump_Content));
+           (Self, Env_Id, Parent_Env_Id, Dump_Addresses, Dump_Content,
+            Context => Context));
    end Dump_One_Lexical_Env;
 
    -----------------------------------
    -- Dump_Lexical_Env_Parent_Chain --
    -----------------------------------
 
-   procedure Dump_Lexical_Env_Parent_Chain (Env : Lexical_Env) is
+   procedure Dump_Lexical_Env_Parent_Chain
+     (Env : Lexical_Env; Context : Context_Type) is
    begin
-      Put_Line (Lexical_Env_Parent_Chain (Env));
+      Put_Line (Lexical_Env_Parent_Chain (Env, Context));
    end Dump_Lexical_Env_Parent_Chain;
 
    ------------
    -- Parent --
    ------------
 
-   function Parent (Self : Lexical_Env) return Lexical_Env is
+   function Parent
+     (Self : Lexical_Env; Context : Context_Type) return Lexical_Env
+   is
+      Call_Depth : aliased Natural;
    begin
-      case Self.Kind is
-         when Primary =>
-            declare
-               Ret : constant Lexical_Env :=
-                 Get_Env (Self.Env.Parent, No_Entity_Info);
-            begin
-               return (if Ret = Null_Lexical_Env then Empty_Env else Ret);
-            end;
-         when Orphaned =>
-            return Parent (Self.Env.Orphaned_Env);
-         when Grouped =>
-            return Empty_Env;
-         when Rebound =>
-            return Parent (Self.Env.Rebound_Env);
-      end case;
+      Enter_Call (Context, Call_Depth'Access);
+
+      return Result : Lexical_Env do
+         case Self.Kind is
+            when Primary =>
+               declare
+                  Ret : constant Lexical_Env :=
+                    Get_Env (Self.Env.Parent, No_Entity_Info, Context);
+               begin
+                  Result :=
+                    (if Ret = Null_Lexical_Env then Empty_Env else Ret);
+               end;
+            when Orphaned =>
+               Result := Parent (Self.Env.Orphaned_Env, Context);
+            when Grouped =>
+               Result := Empty_Env;
+            when Rebound =>
+               Result := Parent (Self.Env.Rebound_Env, Context);
+         end case;
+
+         Exit_Call (Context, Call_Depth);
+      end return;
+   exception
+      when others =>
+         Exit_Call (Context, Call_Depth);
+         raise;
    end Parent;
 
    --------------
@@ -1971,7 +2057,9 @@ package body Langkit_Support.Lexical_Env is
    -- Recompute_Referenced_Envs --
    -------------------------------
 
-   procedure Recompute_Referenced_Envs (Self : Lexical_Env) is
+   procedure Recompute_Referenced_Envs
+     (Self : Lexical_Env; Context : Context_Type)
+   is
       R : access Referenced_Env;
    begin
       if Self in Null_Lexical_Env | Empty_Env then
@@ -1982,7 +2070,7 @@ package body Langkit_Support.Lexical_Env is
             .. Self.Env.Referenced_Envs.Last_Index
       loop
          R := Self.Env.Referenced_Envs.Get_Access (I);
-         Resolve (R.Getter, No_Entity_Info);
+         Resolve (R.Getter, No_Entity_Info, Context);
          R.State := Active;
       end loop;
    end Recompute_Referenced_Envs;
@@ -2000,8 +2088,11 @@ package body Langkit_Support.Lexical_Env is
    -- Is_Stale --
    --------------
 
-   function Is_Stale (Self : Lexical_Env) return Boolean is
-      L : Lexical_Env;
+   function Is_Stale
+     (Self : Lexical_Env; Context : Context_Type) return Boolean
+   is
+      Call_Depth : aliased Natural;
+      L          : Lexical_Env;
    begin
       if Self = Empty_Env then
          --  Empty_Env is always stale, because since it is not linked to any
@@ -2010,11 +2101,14 @@ package body Langkit_Support.Lexical_Env is
          return True;
       end if;
 
+      Enter_Call (Context, Call_Depth'Access);
+
       case Self.Kind is
          when Primary =>
             if Self.Owner /= No_Unit then
                --  If there is an owner, check that the unit version has not
                --  been incremented since then.
+               Exit_Call (Context, Call_Depth);
                return Get_Unit_Version (Self.Owner) > Self.Version;
             end if;
 
@@ -2023,21 +2117,33 @@ package body Langkit_Support.Lexical_Env is
             loop
                L := Get_Env
                  (Self.Env.Referenced_Envs.Get_Access (I).Getter,
-                  No_Entity_Info);
-               if Is_Stale (L) then
+                  No_Entity_Info,
+                  Context);
+               if Is_Stale (L, Context) then
+                  Exit_Call (Context, Call_Depth);
                   return True;
                end if;
                Dec_Ref (L);
             end loop;
+            Exit_Call (Context, Call_Depth);
             return False;
 
          when Orphaned =>
             pragma Assert (Self.Owner = No_Unit);
-            return Is_Stale (Self.Env.Orphaned_Env);
+            return Result : constant Boolean :=
+               Is_Stale (Self.Env.Orphaned_Env, Context)
+            do
+               Exit_Call (Context, Call_Depth);
+            end return;
 
          when Grouped =>
             pragma Assert (Self.Owner = No_Unit);
-            return (for some E of Self.Env.Grouped_Envs.all => Is_Stale (E));
+            return Result : constant Boolean :=
+               (for some E of Self.Env.Grouped_Envs.all =>
+                Is_Stale (E, Context))
+            do
+               Exit_Call (Context, Call_Depth);
+            end return;
 
          when Rebound =>
             if Self.Owner /= No_Unit then
@@ -2046,13 +2152,26 @@ package body Langkit_Support.Lexical_Env is
                --  stored in this env are still valid. This also ensures that
                --  the rebound env is not stale, so we can early return instead
                --  of recursively check its state.
-               return
-                  Get_Context_Version (Self.Owner) > Self.Env.Context_Version;
+               return Result : constant Boolean :=
+                  Get_Context_Version (Self.Owner) > Self.Env.Context_Version
+               do
+                  Exit_Call (Context, Call_Depth);
+               end return;
             end if;
+
             --  If there is no owner, we only care about the fact that the
             --  rebound_env is not stale.
-            return Is_Stale (Self.Env.Rebound_Env);
+            return Result : constant Boolean :=
+               Is_Stale (Self.Env.Rebound_Env, Context)
+            do
+               Exit_Call (Context, Call_Depth);
+            end return;
       end case;
+
+   exception
+      when others =>
+         Exit_Call (Context, Call_Depth);
+         raise;
    end Is_Stale;
 
 end Langkit_Support.Lexical_Env;

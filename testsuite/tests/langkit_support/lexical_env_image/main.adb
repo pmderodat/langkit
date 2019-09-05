@@ -48,21 +48,23 @@ procedure Main is
 
    Rebound : Lexical_Env := Rebind_Env (Prim_B, R2);
 
+   Context : constant Context_Type := (null record);
+
 begin
    Add (Prim_A, Key_X, Name_Item_X1);
    Add (Prim_A, Key_X, Name_Item_X2);
    Add (Prim_A, Key_Y, Name_Item_Y1);
    Add (Prim_B, Key_Y, Name_Item_Y2);
 
-   Put (Lexical_Env_Image (Prim_A));
-   Put (Lexical_Env_Image (Prim_B));
+   Put (Lexical_Env_Image (Prim_A, Context => Context));
+   Put (Lexical_Env_Image (Prim_B, Context => Context));
    New_Line;
-   Put (Lexical_Env_Image (Orphaned_1));
-   Put (Lexical_Env_Image (Orphaned_2));
+   Put (Lexical_Env_Image (Orphaned_1, Context => Context));
+   Put (Lexical_Env_Image (Orphaned_2, Context => Context));
    New_Line;
-   Put (Lexical_Env_Image (Grouped));
+   Put (Lexical_Env_Image (Grouped, Context => Context));
    New_Line;
-   Put (Lexical_Env_Image (Rebound));
+   Put (Lexical_Env_Image (Rebound, Context => Context));
 
    Dec_Ref (Orphaned_1);
    Dec_Ref (Orphaned_2);

@@ -60,9 +60,9 @@ package body ${ada_lib_name}.Debug is
    -- PEnv --
    ----------
 
-   procedure PEnv (Env : AST_Envs.Lexical_Env) is
+   procedure PEnv (Env : AST_Envs.Lexical_Env; Context : Internal_Context) is
    begin
-      AST_Envs.Dump_Lexical_Env_Parent_Chain (Env);
+      AST_Envs.Dump_Lexical_Env_Parent_Chain (Env, Context);
    end PEnv;
 
    -----------------

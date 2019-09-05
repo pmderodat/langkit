@@ -98,7 +98,8 @@ class EnvGet(AbstractExpression):
                     ('Lookup_Kind', 'To_Lookup_Kind_Type ({})'.format(
                         self.lookup_kind_expr.render_expr()
                     )),
-                    ('Categories', cat_arg)]
+                    ('Categories', cat_arg),
+                    ('Context', 'Self.Unit.Context')]
 
             # Pass the From parameter if the user wants sequential semantics
             if self.sequential_from:
@@ -308,7 +309,7 @@ def env_parent(self, env):
     """
     return CallExpr(
         'Env_Parent', 'AST_Envs.Parent', T.LexicalEnv,
-        [construct(env, T.LexicalEnv)],
+        [construct(env, T.LexicalEnv), 'Self.Unit.Context'],
         abstract_expr=self,
     )
 

@@ -49,6 +49,11 @@ package Support is
    package Symbols is new Langkit_Support.Symbols
      (Precomputed_Symbol_Index, Precomputed_Symbol);
 
+   type Context_Type is null record;
+   procedure Enter_Call (Context : Context_Type; Call_Depth : access Natural)
+   is null;
+   procedure Exit_Call (Context : Context_Type; Call_Depth : Natural) is null;
+
    package Envs is new Langkit_Support.Lexical_Env
      (Precomputed_Symbol_Index => Precomputed_Symbol_Index,
       Precomputed_Symbol       => Precomputed_Symbol,
@@ -70,7 +75,8 @@ package Support is
       Node_Text_Image          => Node_Image,
       Register_Rebinding       => Register_Rebinding,
       Ref_Category             => Ref_Category,
-      Ref_Categories           => Ref_Categories);
+      Ref_Categories           => Ref_Categories,
+      Context_Type             => Context_Type);
 
    procedure Destroy is new Ada.Unchecked_Deallocation
      (Envs.Env_Rebindings_Type, Envs.Env_Rebindings);

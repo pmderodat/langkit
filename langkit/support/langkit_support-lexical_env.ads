@@ -100,6 +100,15 @@ generic
      (Node : Node_Type; Rebinding : System.Address);
    --  Register a rebinding to be destroyed when Node is destroyed
 
+   type Context_Type is private;
+
+   with procedure Enter_Call
+     (Context : Context_Type; Call_Depth : access Natural) is null;
+   with procedure Exit_Call
+     (Context : Context_Type; Call_Depth : Natural) is null;
+   --  Callback to track recursion during lookups. This mechanism is used to
+   --  avoid stack overflows.
+
 package Langkit_Support.Lexical_Env is
 
    Activate_Lookup_Cache : Boolean := True;
@@ -257,7 +266,8 @@ package Langkit_Support.Lexical_Env is
 
    No_Env_Getter : constant Env_Getter := (False, Null_Lexical_Env);
 
-   procedure Resolve (Self : in out Env_Getter; Info : Entity_Info);
+   procedure Resolve
+     (Self : in out Env_Getter; Info : Entity_Info; Context : Context_Type);
    --  Resolve the reference for this env getter. Info is forwarded to the
    --  resolver callback.
 
@@ -270,7 +280,9 @@ package Langkit_Support.Lexical_Env is
    --  environment).
 
    function Get_Env
-     (Self : in out Env_Getter; Info : Entity_Info) return Lexical_Env;
+     (Self    : in out Env_Getter;
+      Info    : Entity_Info;
+      Context : Context_Type) return Lexical_Env;
    --  Return the environment associated to the Self env getter. If Self is
    --  dynamic, Info is forwarded to the resolver callback.
 
@@ -429,7 +441,8 @@ package Langkit_Support.Lexical_Env is
       Resolver         : Lexical_Env_Resolver;
       Kind             : Ref_Kind := Normal;
       Categories       : Ref_Categories := All_Cats;
-      Rebindings_Assoc : Boolean := False)
+      Rebindings_Assoc : Boolean := False;
+      Context          : Context_Type)
       with Pre => Self.Kind = Primary;
    --  Add a dynamic reference from Self to the lexical environment computed
    --  calling Resolver on Referenced_From. This makes the content of this
@@ -465,7 +478,8 @@ package Langkit_Support.Lexical_Env is
    --      is dynamic);
    --    * deactivate referenced environments.
 
-   procedure Recompute_Referenced_Envs (Self : Lexical_Env)
+   procedure Recompute_Referenced_Envs
+     (Self : Lexical_Env; Context : Context_Type)
       with Pre => Self.Kind = Primary;
    --  Recompute the referenced environments for this environment. In other
    --  words, re-resolve the R.Getter for all referenced environments R in
@@ -486,7 +500,8 @@ package Langkit_Support.Lexical_Env is
       Key         : Symbol_Type;
       From        : Node_Type := No_Node;
       Lookup_Kind : Lookup_Kind_Type := Recursive;
-      Categories  : Ref_Categories := All_Cats) return Entity_Array;
+      Categories  : Ref_Categories := All_Cats;
+      Context     : Context_Type) return Entity_Array;
    --  Get the array of entities for this Key. If From is given, then nodes
    --  will be filtered according to the Can_Reach primitive given as parameter
    --  for the generic package.
@@ -504,7 +519,8 @@ package Langkit_Support.Lexical_Env is
       Key         : Symbol_Type;
       From        : Node_Type := No_Node;
       Lookup_Kind : Lookup_Kind_Type := Recursive;
-      Categories  : Ref_Categories := All_Cats) return Entity;
+      Categories  : Ref_Categories := All_Cats;
+      Context     : Context_Type) return Entity;
    --  Like Get, but return only the first matching entity. Return a null
    --  entity if no entity is found.
 
@@ -513,7 +529,8 @@ package Langkit_Support.Lexical_Env is
    --  is a grouped environment or if it has any transitive parent, this raises
    --  a property error.
 
-   function Parent (Self : Lexical_Env) return Lexical_Env;
+   function Parent
+     (Self : Lexical_Env; Context : Context_Type) return Lexical_Env;
    --  Return the parent lexical env for env Self or Empty_Env if Self has no
    --  parent.
 
@@ -552,7 +569,9 @@ package Langkit_Support.Lexical_Env is
    --  otherwise.
 
    function Shed_Rebindings
-     (E_Info : Entity_Info; Env : Lexical_Env) return Entity_Info;
+     (E_Info  : Entity_Info;
+      Env     : Lexical_Env;
+      Context : Context_Type) return Entity_Info;
    --  Return a new entity info from E_Info, shedding env rebindings that are
    --  not in the parent chain for the env From_Env.
 
@@ -781,7 +800,8 @@ package Langkit_Support.Lexical_Env is
    --  Deallocate the resources allocated to the Self lexical environment. Must
    --  not be used directly for ref-counted envs.
 
-   function Is_Stale (Self : Lexical_Env) return Boolean;
+   function Is_Stale
+     (Self : Lexical_Env; Context : Context_Type) return Boolean;
    --  Return whether Self points to a now defunct lexical env
 
    -------------------
@@ -794,7 +814,8 @@ package Langkit_Support.Lexical_Env is
       Parent_Env_Id  : String := "";
       Dump_Addresses : Boolean := False;
       Dump_Content   : Boolean := True;
-      Prefix         : String := "") return String;
+      Prefix         : String := "";
+      Context        : Context_Type) return String;
    --  Return a textual representation of Self.
    --
    --  If provided, Env_Id and Parent_Env_Id are used to designate Self and its
@@ -811,16 +832,19 @@ package Langkit_Support.Lexical_Env is
    --
    --  Prefix is used to prefix each emitted line.
 
-   function Lexical_Env_Parent_Chain (Env : Lexical_Env) return String;
+   function Lexical_Env_Parent_Chain
+     (Env : Lexical_Env; Context : Context_Type) return String;
 
    procedure Dump_One_Lexical_Env
      (Self           : Lexical_Env;
       Env_Id         : String := "";
       Parent_Env_Id  : String := "";
       Dump_Addresses : Boolean := False;
-      Dump_Content   : Boolean := True);
+      Dump_Content   : Boolean := True;
+      Context        : Context_Type);
 
-   procedure Dump_Lexical_Env_Parent_Chain (Env : Lexical_Env);
+   procedure Dump_Lexical_Env_Parent_Chain
+     (Env : Lexical_Env; Context : Context_Type);
 
 private
 
