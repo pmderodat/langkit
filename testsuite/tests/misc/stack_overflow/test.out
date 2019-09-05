@@ -1,0 +1,18 @@
+main.py: Running...
+
+== No overflow: property calls ==
+Returned: 1
+
+== Overflow: property calls ==
+PropertyError raised: raised LIBFOOLANG.COMMON.PROPERTY_ERROR : stack overflow
+
+== Overflow: lexical env lookups ==
+PropertyError raised: raised LIBFOOLANG.COMMON.PROPERTY_ERROR : stack overflow
+
+== Overflow parsers ==
+Diagnostics:
+   Error during parsing: stack overflow
+Parsinig returned: None
+
+main.py: Done.
+Done
